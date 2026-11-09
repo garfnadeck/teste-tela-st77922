@@ -16,6 +16,7 @@
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
+#include "esp_cache.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_lcd_panel_io.h"
@@ -108,14 +109,17 @@ static esp_lcd_panel_handle_t lcd_init(void)
 
 static void fill_color(esp_lcd_panel_handle_t panel, uint16_t color)
 {
-    /* RAM interna com DMA (não PSRAM): diagnóstico de ruído na parte de baixo da tela. */
-    uint16_t *band = heap_caps_malloc(LCD_H_RES * BAND_ROWS * sizeof(uint16_t),
-                                      MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    /* Buffer na PSRAM, alinhado a 64 bytes (linha de cache). O DMA lê direto da
+     * memória, então o cache precisa ser descarregado (write-back) antes de enviar.
+     * Sem isso, parte da faixa chega com dados antigos (visto como ruído). */
+    size_t size = LCD_H_RES * BAND_ROWS * sizeof(uint16_t);
+    uint16_t *band = heap_caps_aligned_alloc(64, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!band) {
-        ESP_LOGE(TAG, "Sem memoria para a faixa de cor");
+        ESP_LOGE(TAG, "Sem memoria para a faixa de cor (PSRAM)");
         return;
     }
     for (int i = 0; i < LCD_H_RES * BAND_ROWS; i++) band[i] = color;
+    ESP_ERROR_CHECK(esp_cache_msync(band, size, ESP_CACHE_MSYNC_FLAG_DIR_C2M));
 
     for (int y = 0; y < LCD_V_RES; y += BAND_ROWS) {
         esp_lcd_panel_draw_bitmap(panel, 0, y, LCD_H_RES, y + BAND_ROWS, band);
