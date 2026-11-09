@@ -104,6 +104,13 @@ static esp_lcd_panel_handle_t lcd_init(void)
     vTaskDelay(pdMS_TO_TICKS(200));   /* o ST77922 precisa de ~120 ms para sair do sleep */
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel, true));
 
+    /* Diagnóstico: lê o ID do painel (comando 0x04, RDDID). Se vier zeros ou erro,
+     * o painel não está recebendo nossos comandos QSPI. */
+    uint8_t rddid[3] = { 0 };
+    esp_err_t err = esp_lcd_panel_io_rx_param(io, 0x04, rddid, sizeof(rddid));
+    ESP_LOGI(TAG, "RDDID: err=%s  %02X %02X %02X", esp_err_to_name(err),
+             rddid[0], rddid[1], rddid[2]);
+
     ESP_LOGI(TAG, "Tela inicializada (%dx%d)", LCD_H_RES, LCD_V_RES);
     return panel;
 }
