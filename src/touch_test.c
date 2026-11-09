@@ -22,6 +22,7 @@
 static i2c_master_bus_handle_t s_bus = NULL;
 static i2c_master_dev_handle_t s_dev = NULL;
 static uint8_t s_max_pontos = 1;
+static uint8_t s_ultimo_info = 0xFF;   /* diagnóstico: último byte de status lido */
 
 static esp_err_t reg_read(uint16_t reg, uint8_t *buf, size_t len)
 {
@@ -97,7 +98,15 @@ bool touch_test_read(uint16_t *x, uint16_t *y)
     if (!s_dev) return false;
 
     uint8_t info = 0;
-    if (reg_read(REG_TOUCH_INFO, &info, 1) != ESP_OK || !(info & 0x08)) {
+    if (reg_read(REG_TOUCH_INFO, &info, 1) != ESP_OK) {
+        return false;
+    }
+    /* Diagnóstico: loga quando o status ou o pino INT mudam. */
+    if (info != s_ultimo_info) {
+        ESP_LOGI(TAG, "status=0x%02X INT=%d", info, gpio_get_level(PIN_TOUCH_INT));
+        s_ultimo_info = info;
+    }
+    if (!(info & 0x08)) {
         return false;
     }
 
@@ -106,6 +115,8 @@ bool touch_test_read(uint16_t *x, uint16_t *y)
         return false;
     }
 
+    ESP_LOGD(TAG, "bytes do ponto 0: %02X %02X %02X %02X %02X %02X %02X",
+             pontos[0], pontos[1], pontos[2], pontos[3], pontos[4], pontos[5], pontos[6]);
     for (int i = 0; i < s_max_pontos; i++) {
         int base = i * 7;
         if (!(pontos[base] & 0x80)) continue;   /* bit 7 = ponto válido */
