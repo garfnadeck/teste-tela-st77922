@@ -34,7 +34,7 @@
 #define PIN_BL        41
 #define LCD_H_RES     320
 #define LCD_V_RES     480
-#define LCD_PCLK_HZ   (2 * 1000 * 1000)    /* 2 MHz: diagnóstico de ruído na imagem; subir depois se estável */
+#define LCD_PCLK_HZ   (10 * 1000 * 1000)   /* 10 MHz: 2 MHz deixou a tela preta com buffer na RAM interna */
 #define BAND_ROWS     40   /* linhas por transferência: 320 * 40 * 2 bytes = 25 KB */
 
 static void backlight_on(void)
