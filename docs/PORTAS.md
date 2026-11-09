@@ -51,6 +51,14 @@ Aviso no boot: o número máximo de pontos lido em 0x09 veio 0x05 e foi ignorado
 
 Codec de áudio ES8311 também no mesmo barramento, endereço 0x18 (confirmar no scan).
 
+## Touch: comportamento observado e workaround
+
+- O chip responde no endereço `0x55` e reporta o primeiro toque com os dados corretos (status `0x08`, pontos com bit 7 setado).
+- Depois do primeiro toque, o status volta a `0x00`, mas o INT fica em `0` e os registradores de ponto congelam. Sem reset, nenhum toque novo é reportado.
+- Workaround validado: se o INT ficar baixo por mais de 30 ms sem novos dados, faz um pulso de RST (IO48, 10 ms baixo + 100 ms alto). Depois do reset, cada toque é reportado.
+- Custo: cada reset leva ~110 ms, durante os quais toques são perdidos.
+- Causa raiz: não identificada. O código de leitura é igual ao do fabricante (bsp_touch.c), então a suspeita é a sequência de confirmação do evento.
+
 ## Cartão microSD (SDIO 4 bits)
 
 | Sinal | GPIO | Status | Observação |
@@ -98,6 +106,6 @@ Não há pino de detecção de cartão ligado ao ESP32 (CD/DAT3 é o DATA3). O r
 | Item | Status |
 |---|---|
 | Tela (init do fabricante, texto na tela) | OK (texto TESTE validado visualmente) |
-| Touch | OK (toque detectado em 0x55; falta validar cantos) |
+| Touch | OK com reset de recuperação (ver nota abaixo) |
 | SD (SDIO) | OK (cartão de 14,8 GB, 4 bits, 20 MHz, leitura e escrita conferem) |
 | Áudio | Não testado |
