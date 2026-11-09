@@ -111,7 +111,16 @@ bool touch_test_read(uint16_t *x, uint16_t *y)
     }
 
     uint8_t pontos[7 * TOUCH_MAX_PONTOS] = { 0 };
-    if (reg_read(REG_TOUCH_PT0, pontos, 7 * s_max_pontos) != ESP_OK) {
+    esp_err_t err = reg_read(REG_TOUCH_PT0, pontos, 7 * s_max_pontos);
+
+    /* Confirma o evento: escreve 0x00 no status para o chip liberar o próximo toque. */
+    uint8_t ack[3] = { (uint8_t)(REG_TOUCH_INFO >> 8), (uint8_t)(REG_TOUCH_INFO & 0xFF), 0x00 };
+    esp_err_t err_ack = i2c_master_transmit(s_dev, ack, sizeof(ack), pdMS_TO_TICKS(100));
+    if (err_ack != ESP_OK) {
+        ESP_LOGW(TAG, "ack falhou: %s", esp_err_to_name(err_ack));
+    }
+
+    if (err != ESP_OK) {
         return false;
     }
 
