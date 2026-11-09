@@ -118,7 +118,10 @@ static void fill_color(esp_lcd_panel_handle_t panel, uint16_t color)
         ESP_LOGE(TAG, "Sem memoria para a faixa de cor (PSRAM)");
         return;
     }
-    for (int i = 0; i < LCD_H_RES * BAND_ROWS; i++) band[i] = color;
+    /* ESP32 é little-endian, mas o painel espera RGB565 com o byte alto primeiro.
+     * Sem trocar os bytes, as cores saem erradas (vermelho vira outra cor). */
+    uint16_t swapped = (uint16_t)((color >> 8) | (color << 8));
+    for (int i = 0; i < LCD_H_RES * BAND_ROWS; i++) band[i] = swapped;
     ESP_ERROR_CHECK(esp_cache_msync(band, size, ESP_CACHE_MSYNC_FLAG_DIR_C2M));
 
     for (int y = 0; y < LCD_V_RES; y += BAND_ROWS) {
