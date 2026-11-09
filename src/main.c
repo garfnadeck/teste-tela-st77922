@@ -60,6 +60,11 @@ void app_main(void)
             ultimo_y = y;
         }
         estava_tocando = tocando;
+
+        /* Se o INT ficar baixo sem novos dados por 2 s, o chip travou: faz reset. */
+        if (touch_test_int_baixo_ms() > 2000) {
+            touch_test_reset();
+        }
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }

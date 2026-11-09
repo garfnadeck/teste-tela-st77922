@@ -6,6 +6,7 @@
 #include "driver/i2c_master.h"
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 
 #include "board_pins.h"
 #include "touch_test.h"
@@ -26,11 +27,27 @@ static i2c_master_dev_handle_t s_dev = NULL;
 static uint8_t s_max_pontos = 1;
 static uint8_t s_ultimo_info = 0xFF;   /* diagnóstico: último byte de status lido */
 static uint8_t s_ultimos_pontos[7 * TOUCH_MAX_PONTOS];
+static int64_t s_int_baixo_desde = 0;   /* instante (us) em que o INT ficou baixo */
 
 static esp_err_t reg_read(uint16_t reg, uint8_t *buf, size_t len)
 {
     uint8_t w[2] = { (uint8_t)(reg >> 8), (uint8_t)(reg & 0xFF) };
     return i2c_master_transmit_receive(s_dev, w, sizeof(w), buf, len, pdMS_TO_TICKS(100));
+}
+
+static void pulso_reset(void)
+{
+    gpio_set_level(PIN_TOUCH_RST, 0);
+    vTaskDelay(pdMS_TO_TICKS(10));
+    gpio_set_level(PIN_TOUCH_RST, 1);
+    vTaskDelay(pdMS_TO_TICKS(100));
+}
+
+void touch_test_reset(void)
+{
+    ESP_LOGW(TAG, "reset de hardware do touch");
+    pulso_reset();
+    s_ultimo_info = 0xFF;
 }
 
 esp_err_t touch_test_init(void)
@@ -44,16 +61,13 @@ esp_err_t touch_test_init(void)
     bus_cfg.flags.enable_internal_pullup = 1;
     ESP_RETURN_ON_ERROR(i2c_new_master_bus(&bus_cfg, &s_bus), TAG, "falha ao criar barramento I2C");
 
-    /* RST do touch: baixo, espera, alto, espera. INT: entrada com pull-up. */
+    /* RST do touch e INT. */
     gpio_config_t rst_cfg = {
         .pin_bit_mask = 1ULL << PIN_TOUCH_RST,
         .mode = GPIO_MODE_OUTPUT,
     };
     ESP_RETURN_ON_ERROR(gpio_config(&rst_cfg), TAG, "gpio RST");
-    gpio_set_level(PIN_TOUCH_RST, 0);
-    vTaskDelay(pdMS_TO_TICKS(10));
-    gpio_set_level(PIN_TOUCH_RST, 1);
-    vTaskDelay(pdMS_TO_TICKS(100));
+    pulso_reset();
 
     gpio_config_t int_cfg = {
         .pin_bit_mask = 1ULL << PIN_TOUCH_INT,
@@ -94,6 +108,17 @@ void touch_test_scan(void)
         }
     }
     ESP_LOGI(TAG, "scan: %d dispositivo(s) encontrado(s)", achados);
+}
+
+int touch_test_int_baixo_ms(void)
+{
+    if (gpio_get_level(PIN_TOUCH_INT) != 0) {
+        s_int_baixo_desde = 0;
+        return 0;
+    }
+    int64_t agora = esp_timer_get_time();
+    if (s_int_baixo_desde == 0) s_int_baixo_desde = agora;
+    return (int)((agora - s_int_baixo_desde) / 1000);
 }
 
 bool touch_test_read(uint16_t *x, uint16_t *y)
