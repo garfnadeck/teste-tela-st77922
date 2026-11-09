@@ -1,13 +1,11 @@
 /*
- * Teste de bancada: tela ST77922 320x480 por QSPI, com backlight e cores de teste.
+ * Teste de bancada: tela ST77922 320x480 por QSPI.
+ * Desenha o texto "TESTE" em preto sobre fundo branco.
  *
  * Pinagem (referência ES3C35P, docs/PINAGEM_TELA_ES3C35P.md):
  *   CS IO10 | CLK IO12 | D0 IO11 | D1 IO13 | D2 IO14 | D3 IO9
  *   RST: EN (sem GPIO, usa reset por software)
  *   BL:  IO41 (alto liga)
- *
- * Esperado no monitor serial: "PSRAM encontrada", "Tela inicializada" e
- * a tela alternando entre vermelho, verde, azul e branco a cada 2 s.
  */
 
 #include <stdio.h>
@@ -35,8 +33,13 @@
 #define PIN_BL        41
 #define LCD_H_RES     320
 #define LCD_V_RES     480
-#define LCD_PCLK_HZ   (10 * 1000 * 1000)   /* 10 MHz: 2 MHz deixou a tela preta com buffer na RAM interna */
-#define BAND_ROWS     40   /* linhas por transferência: 320 * 40 * 2 bytes = 25 KB */
+#define LCD_PCLK_HZ   (10 * 1000 * 1000)   /* 10 MHz */
+#define BAND_ROWS     40                   /* linhas por transferência: 320 * 40 * 2 = 25 KB */
+
+#define COR_FUNDO     0xFFFF               /* branco */
+#define COR_TEXTO     0x0000               /* preto */
+#define TEXTO         "TESTE"
+#define TEXTO_ESCALA  10                   /* cada pixel da fonte vira 10x10 */
 
 static void backlight_on(void)
 {
@@ -90,8 +93,7 @@ static esp_lcd_panel_handle_t lcd_init(void)
         .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
         .bits_per_pixel = 16,
     };
-    /* Obrigatório para QSPI: o componente precisa saber que a interface é QSPI.
-     * O init do ST77922 é o padrão do componente (sem init_cmds próprios). */
+    /* Obrigatório para QSPI: o componente precisa saber que a interface é QSPI. */
     st77922_vendor_config_t vendor_cfg = {
         .flags = { .use_qspi_interface = 1 },
     };
@@ -99,35 +101,74 @@ static esp_lcd_panel_handle_t lcd_init(void)
     ESP_ERROR_CHECK(esp_lcd_new_panel_st77922(io, &panel_cfg, &panel));
     ESP_ERROR_CHECK(esp_lcd_panel_reset(panel));
     ESP_ERROR_CHECK(esp_lcd_panel_init(panel));
-    /* Pausa para o painel sair do modo de suspensão (o ST77922 precisa de ~120 ms). */
-    vTaskDelay(pdMS_TO_TICKS(200));
+    vTaskDelay(pdMS_TO_TICKS(200));   /* o ST77922 precisa de ~120 ms para sair do sleep */
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel, true));
 
     ESP_LOGI(TAG, "Tela inicializada (%dx%d)", LCD_H_RES, LCD_V_RES);
     return panel;
 }
 
-static void fill_color(esp_lcd_panel_handle_t panel, uint16_t color)
+/* Glifo 5x7 de cada letra: uma linha por byte, bit 4 = pixel da esquerda. */
+static uint8_t glifo_linha(char c, int linha)
 {
-    /* Buffer na PSRAM, alinhado a 64 bytes (linha de cache). O DMA lê direto da
-     * memória, então o cache precisa ser descarregado (write-back) antes de enviar.
-     * Sem isso, parte da faixa chega com dados antigos (visto como ruído). */
-    size_t size = LCD_H_RES * BAND_ROWS * sizeof(uint16_t);
-    uint16_t *band = heap_caps_aligned_alloc(64, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!band) {
-        ESP_LOGE(TAG, "Sem memoria para a faixa de cor (PSRAM)");
-        return;
+    static const uint8_t T[7] = { 0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04 };
+    static const uint8_t E[7] = { 0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F };
+    static const uint8_t S[7] = { 0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E };
+    switch (c) {
+        case 'T': return T[linha];
+        case 'E': return E[linha];
+        case 'S': return S[linha];
+        default:  return 0;
     }
-    /* ESP32 é little-endian, mas o painel espera RGB565 com o byte alto primeiro.
-     * Sem trocar os bytes, as cores saem erradas (vermelho vira outra cor). */
-    uint16_t swapped = (uint16_t)((color >> 8) | (color << 8));
-    for (int i = 0; i < LCD_H_RES * BAND_ROWS; i++) band[i] = swapped;
-    ESP_ERROR_CHECK(esp_cache_msync(band, size, ESP_CACHE_MSYNC_FLAG_DIR_C2M));
+}
 
-    for (int y = 0; y < LCD_V_RES; y += BAND_ROWS) {
-        esp_lcd_panel_draw_bitmap(panel, 0, y, LCD_H_RES, y + BAND_ROWS, band);
+/* Retorna 1 se o pixel (x, y) faz parte do texto centralizado. */
+static int pixel_do_texto(int x, int y)
+{
+    const int avanco = 6 * TEXTO_ESCALA;                    /* 5 colunas + 1 de espaço */
+    const int largura = (int)strlen(TEXTO) * avanco - TEXTO_ESCALA;
+    const int altura = 7 * TEXTO_ESCALA;
+    const int x0 = (LCD_H_RES - largura) / 2;
+    const int y0 = (LCD_V_RES - altura) / 2;
+
+    if (x < x0 || y < y0 || x >= x0 + largura || y >= y0 + altura) return 0;
+
+    int dx = x - x0;
+    int dy = y - y0;
+    int cx = dx % avanco;
+    if (cx >= 5 * TEXTO_ESCALA) return 0;                   /* espaço entre letras */
+
+    int letra = dx / avanco;
+    int coluna = cx / TEXTO_ESCALA;
+    int linha = dy / TEXTO_ESCALA;
+    return (glifo_linha(TEXTO[letra], linha) >> (4 - coluna)) & 1;
+}
+
+/* Monta o quadro inteiro na PSRAM, já com os bytes do RGB565 trocados. */
+static uint16_t *monta_quadro(void)
+{
+    size_t total = LCD_H_RES * LCD_V_RES * sizeof(uint16_t);
+    uint16_t *fb = heap_caps_aligned_alloc(64, total, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!fb) return NULL;
+
+    for (int i = 0; i < LCD_H_RES * LCD_V_RES; i++) {
+        int x = i % LCD_H_RES;
+        int y = i / LCD_H_RES;
+        uint16_t c = pixel_do_texto(x, y) ? COR_TEXTO : COR_FUNDO;
+        /* ESP32 é little-endian; o painel espera o byte alto primeiro. */
+        fb[i] = (uint16_t)((c >> 8) | (c << 8));
     }
-    heap_caps_free(band);
+    /* O DMA lê direto da PSRAM: descarrega o cache antes de enviar. */
+    ESP_ERROR_CHECK(esp_cache_msync(fb, total, ESP_CACHE_MSYNC_FLAG_DIR_C2M));
+    return fb;
+}
+
+static void envia_quadro(esp_lcd_panel_handle_t panel, const uint16_t *fb)
+{
+    for (int y = 0; y < LCD_V_RES; y += BAND_ROWS) {
+        esp_lcd_panel_draw_bitmap(panel, 0, y, LCD_H_RES, y + BAND_ROWS,
+                                  fb + y * LCD_H_RES);
+    }
 }
 
 void app_main(void)
@@ -138,14 +179,15 @@ void app_main(void)
 
     esp_lcd_panel_handle_t panel = lcd_init();
 
-    const uint16_t colors[] = { 0xF800 /* vermelho */, 0x07E0 /* verde */,
-                                0x001F /* azul */,     0xFFFF /* branco */ };
-    const char *names[]     = { "vermelho", "verde", "azul", "branco" };
-    int i = 0;
+    uint16_t *fb = monta_quadro();
+    if (!fb) {
+        ESP_LOGE(TAG, "Sem memoria (PSRAM) para o quadro");
+        return;
+    }
+
     while (1) {
-        ESP_LOGI(TAG, "Cor: %s", names[i]);
-        fill_color(panel, colors[i]);
-        i = (i + 1) % 4;
+        ESP_LOGI(TAG, "Enviando texto \"%s\"", TEXTO);
+        envia_quadro(panel, fb);
         vTaskDelay(pdMS_TO_TICKS(2000));
     }
 }
