@@ -1,3 +1,5 @@
+#include <string.h>
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
@@ -23,6 +25,7 @@ static i2c_master_bus_handle_t s_bus = NULL;
 static i2c_master_dev_handle_t s_dev = NULL;
 static uint8_t s_max_pontos = 1;
 static uint8_t s_ultimo_info = 0xFF;   /* diagnóstico: último byte de status lido */
+static uint8_t s_ultimos_pontos[7 * TOUCH_MAX_PONTOS];
 
 static esp_err_t reg_read(uint16_t reg, uint8_t *buf, size_t len)
 {
@@ -101,31 +104,33 @@ bool touch_test_read(uint16_t *x, uint16_t *y)
     if (reg_read(REG_TOUCH_INFO, &info, 1) != ESP_OK) {
         return false;
     }
-    /* Diagnóstico: loga quando o status ou o pino INT mudam. */
     if (info != s_ultimo_info) {
         ESP_LOGI(TAG, "status=0x%02X INT=%d", info, gpio_get_level(PIN_TOUCH_INT));
         s_ultimo_info = info;
     }
-    if (!(info & 0x08)) {
-        return false;
+
+    /* Lê os pontos em todo ciclo, sem depender do bit de status. */
+    uint8_t pontos[7 * TOUCH_MAX_PONTOS] = { 0 };
+    size_t n = 7 * s_max_pontos;
+    esp_err_t err = reg_read(REG_TOUCH_PT0, pontos, n);
+
+    /* Loga os bytes dos pontos quando mudam. */
+    if (err == ESP_OK && memcmp(pontos, s_ultimos_pontos, n) != 0) {
+        ESP_LOGI(TAG, "pontos: %02X %02X %02X %02X %02X %02X %02X",
+                 pontos[0], pontos[1], pontos[2], pontos[3], pontos[4], pontos[5], pontos[6]);
+        memcpy(s_ultimos_pontos, pontos, n);
     }
 
-    uint8_t pontos[7 * TOUCH_MAX_PONTOS] = { 0 };
-    esp_err_t err = reg_read(REG_TOUCH_PT0, pontos, 7 * s_max_pontos);
-
-    /* Confirma o evento: escreve 0x00 no status para o chip liberar o próximo toque. */
-    uint8_t ack[3] = { (uint8_t)(REG_TOUCH_INFO >> 8), (uint8_t)(REG_TOUCH_INFO & 0xFF), 0x00 };
-    esp_err_t err_ack = i2c_master_transmit(s_dev, ack, sizeof(ack), pdMS_TO_TICKS(100));
-    if (err_ack != ESP_OK) {
-        ESP_LOGW(TAG, "ack falhou: %s", esp_err_to_name(err_ack));
+    /* Confirma o status como antes. */
+    if (info & 0x08) {
+        uint8_t ack[3] = { (uint8_t)(REG_TOUCH_INFO >> 8), (uint8_t)(REG_TOUCH_INFO & 0xFF), 0x00 };
+        i2c_master_transmit(s_dev, ack, sizeof(ack), pdMS_TO_TICKS(100));
     }
 
     if (err != ESP_OK) {
         return false;
     }
 
-    ESP_LOGD(TAG, "bytes do ponto 0: %02X %02X %02X %02X %02X %02X %02X",
-             pontos[0], pontos[1], pontos[2], pontos[3], pontos[4], pontos[5], pontos[6]);
     for (int i = 0; i < s_max_pontos; i++) {
         int base = i * 7;
         if (!(pontos[base] & 0x80)) continue;   /* bit 7 = ponto válido */
