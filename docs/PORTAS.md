@@ -38,12 +38,16 @@ Formato dos pixels: RGB565 com byte alto primeiro; o ESP32 é little-endian, ent
 
 | Sinal | GPIO | Status | Observação |
 |---|---|---|---|
-| SDA (I2C0) | IO38 | Pendente | Compartilhado com o codec de áudio ES8311 e a expansão |
-| SCL (I2C0) | IO39 | Pendente | Idem |
-| INT | IO47 | Pendente | Ativo em nível baixo |
-| RST | IO48 | Pendente | Ativo em nível baixo |
+| SDA (I2C0) | IO38 | OK | Compartilhado com o codec de áudio ES8311 e a expansão |
+| SCL (I2C0) | IO39 | OK | Idem |
+| INT | IO47 | Pendente (não usado no teste por polling) | Ativo em nível baixo |
+| RST | IO48 | OK | Ativo em nível baixo |
 
-Endereço I2C do touch: **0x55** no código do fabricante (bsp_touch.c), com registradores de 16 bits. A documentação anterior do projeto dizia FT6336G (endereço 0x38). O esquema mostra o conector com `TP_I2C_SCL`, `TP_I2C_SDA`, `TP_INT` e `TP_RESXP`, sem nome de chip. O scan do barramento (`touch_test_scan`) confirma qual endereço responde.
+Endereço I2C do touch: **0x55** no código do fabricante (bsp_touch.c), com registradores de 16 bits. Confirmado no scan.
+
+Endereços encontrados no scan: `0x18` (codec ES8311), `0x28` (não identificado), `0x55` (touch).
+
+Aviso no boot: o número máximo de pontos lido em 0x09 veio 0x05 e foi ignorado, usando 1 ponto. A documentação anterior do projeto dizia FT6336G (endereço 0x38). O esquema mostra o conector com `TP_I2C_SCL`, `TP_I2C_SDA`, `TP_INT` e `TP_RESXP`, sem nome de chip. O scan do barramento (`touch_test_scan`) confirma qual endereço responde.
 
 Codec de áudio ES8311 também no mesmo barramento, endereço 0x18 (confirmar no scan).
 
@@ -51,12 +55,12 @@ Codec de áudio ES8311 também no mesmo barramento, endereço 0x18 (confirmar no
 
 | Sinal | GPIO | Status | Observação |
 |---|---|---|---|
-| CLK | IO5 | Pendente | Esquema confirmou (antes estava em dúvida) |
-| CMD | IO4 | Pendente | |
-| DATA0 | IO6 | Pendente | |
-| DATA1 | IO7 | Pendente | |
-| DATA2 | IO2 | Pendente | |
-| DATA3 | IO3 | Pendente | |
+| CLK | IO5 | OK | Esquema confirmou (antes estava em dúvida) |
+| CMD | IO4 | OK | |
+| DATA0 | IO6 | OK | |
+| DATA1 | IO7 | OK | |
+| DATA2 | IO2 | OK | |
+| DATA3 | IO3 | OK | |
 
 Não há pino de detecção de cartão ligado ao ESP32 (CD/DAT3 é o DATA3). O resistor de pull-up do cartão está na placa.
 
@@ -93,7 +97,7 @@ Não há pino de detecção de cartão ligado ao ESP32 (CD/DAT3 é o DATA3). O r
 
 | Item | Status |
 |---|---|
-| Tela (init do fabricante, texto na tela) | OK |
-| Touch | Pendente (ver teste) |
-| SD (SDIO) | Pendente (ver teste) |
+| Tela (init do fabricante, texto na tela) | OK (texto TESTE validado visualmente) |
+| Touch | OK (toque detectado em 0x55; falta validar cantos) |
+| SD (SDIO) | OK (cartão de 14,8 GB, 4 bits, 20 MHz, leitura e escrita conferem) |
 | Áudio | Não testado |
